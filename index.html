@@ -15,8 +15,9 @@ header b{color:var(--ac)}
 .tab.sel{border-color:#fff}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#c0392b;margin-left:6px}
 .dot.on{background:#2ecc71}
-#bar{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:0 8px 8px}
-button{border:0;border-radius:14px;padding:16px 8px;font-size:16px;font-weight:700;background:#2a2a36;color:#fff}
+#views{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 8px 8px}
+#bar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 8px 8px}
+button{border:0;border-radius:14px;padding:14px 6px;font-size:15px;font-weight:700;background:#2a2a36;color:#fff}
 button.act{background:var(--ac);color:#000}
 button.warn{background:#c0392b}
 #big{margin:0 8px 8px;padding:20px;border-radius:16px;color:#000;font-size:21px;font-weight:800;display:none}
@@ -26,6 +27,17 @@ button.warn{background:#c0392b}
 .ev .s{font-size:11px;opacity:.6;margin-top:4px}
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;color:#000;font-weight:800;font-size:12px;margin-right:6px}
 .ev button{padding:8px 12px;font-size:14px;margin-top:8px;margin-right:6px}
+#chatwrap{display:none;padding:0 8px}
+#chatlist{height:calc(100vh - 330px);min-height:240px;overflow-y:auto;background:#0a0a0d;border-radius:12px;padding:8px;-webkit-user-select:text;user-select:text}
+.cm{padding:4px 2px;line-height:1.35;word-break:break-word;font-size:16px}
+.cm .b{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.cm .u{font-weight:800}
+.cm img{height:1.5em;vertical-align:middle}
+.cm.me{font-style:italic}
+#send{display:flex;gap:6px;margin-top:8px}
+#send select{flex:0 0 28%;padding:10px;border-radius:10px;background:#1a1a22;color:#fff;border:1px solid #444}
+#send input{flex:1;padding:12px;border-radius:10px;background:#1a1a22;color:#fff;border:1px solid #444;font-size:16px;min-width:0}
+#send button{padding:12px 16px}
 dialog{background:#1a1a22;color:#fff;border:0;border-radius:16px;width:94%;max-width:560px;max-height:90vh}
 dialog input,dialog select{width:100%;padding:10px;margin:4px 0 8px;border-radius:8px;border:1px solid #444;background:#0e0e12;color:#fff}
 dialog label{font-size:12px;opacity:.8}
@@ -36,24 +48,32 @@ dialog label{font-size:12px;opacity:.8}
 <body>
 <header><b>OVERFLOW IRL</b><div id="cnt">0</div></header>
 <div id="tabs"></div>
+<div id="views">
+ <button id="vAlerts" class="act">🔔 Alertas</button>
+ <button id="vChat">💬 Chat <span id="unread"></span></button>
+</div>
 <div id="bar">
- <button id="bPause">⏸ Pausar alertas</button>
- <button id="bMute">🔊 Som/vibração ON</button>
+ <button id="bPause">⏸ Pausar</button>
+ <button id="bMute">🔊 Som ON</button>
  <button id="bClear">🧹 Limpar</button>
- <button id="bCfg">⚙️ Contas</button>
+ <button id="bCfg" style="grid-column:1/-1">⚙️ Contas</button>
 </div>
 <div id="big"></div>
 <div id="feed"></div>
+<div id="chatwrap">
+ <div id="chatlist"></div>
+ <div id="send"><select id="sendAs"></select><input id="msg" placeholder="Escrever no chat…" enterkeyhint="send"><button class="act" id="bSend">➤</button></div>
+</div>
 <div id="log"></div>
 
 <dialog id="dlg"><form method="dialog">
  <h3>Definições</h3>
  <label>Twitch Client ID (partilhado por todas as contas)</label><input id="c_cid">
- <label>Fonte dos eventos</label>
+ <label>Fonte dos alertas</label>
  <select id="c_src"><option value="auto">Automática (SE se ligado, senão Twitch)</option><option value="se">Só StreamElements</option><option value="tw">Só Twitch</option><option value="both">Ambas (pode duplicar)</option></select>
  <div id="accs"></div>
  <button type="button" id="bAdd">➕ Adicionar conta</button>
- <p style="font-size:12px;opacity:.7">URL de redirecionamento a registar na app Twitch: <code id="redir"></code><br>Para entrar com outra conta, termina a sessão na Twitch ou usa uma janela anónima antes de carregares em "Entrar".</p>
+ <p style="font-size:12px;opacity:.7">URL de redirecionamento a registar na app Twitch: <code id="redir"></code><br>Para entrar com outra conta, termina a sessão na Twitch ou usa uma janela anónima antes de carregares em "Entrar". Depois de atualizares esta versão, entra outra vez em cada conta (há uma permissão nova para escrever no chat).</p>
  <button value="ok" class="act">Guardar</button>
 </form></dialog>
 
@@ -61,15 +81,14 @@ dialog label{font-size:12px;opacity:.8}
 const $=s=>document.querySelector(s), LS=localStorage;
 const COLORS=['#ff7a1a','#2ecc71','#3498db','#e91e63','#f1c40f','#9b59b6'];
 let S=JSON.parse(LS.ov_multi||'null')||{cid:LS.ov_cid||'',src:'auto',accounts:[]};
-let paused=false,muted=false,queue=[],count=0,seen=new Set(),filter='all',wake=null;
-const RT={}; // estado de ligação por conta
+let paused=false,muted=false,queue=[],count=0,unread=0,seen=new Set(),filter='all',view='alerts',wake=null;
+const RT={};
 const persist=()=>LS.ov_multi=JSON.stringify(S);
 $('#redir').textContent=location.origin+location.pathname;
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function log(t){$('#log').textContent=new Date().toLocaleTimeString()+' '+t}
 function newAcc(){return {id:'a'+Date.now(),name:'',login:'',jwt:'',sech:'',token:'',color:COLORS[S.accounts.length%COLORS.length]}}
 
-/* callback OAuth: state = id da conta */
 if(location.hash.includes('access_token')){
   const p=new URLSearchParams(location.hash.slice(1)),a=S.accounts.find(x=>x.id===p.get('state'));
   if(a){a.token=p.get('access_token');persist()}
@@ -80,6 +99,7 @@ function beep(){if(muted)return;try{navigator.vibrate&&navigator.vibrate([200,80
 function dedupe(k){if(seen.has(k))return true;seen.add(k);setTimeout(()=>seen.delete(k),20000);return false}
 function srcAllowed(acc,s){const m=S.src,rt=RT[acc.id]||{};if(m==='both')return true;if(m==='se')return s==='SE';if(m==='tw')return s==='TW';return rt.se?s==='SE':s==='TW'}
 
+/* ---------- alertas ---------- */
 function push(acc,ev){
   if(!srcAllowed(acc,ev.source))return;
   ev.acc=acc;
@@ -121,19 +141,25 @@ async function replay(acc,id){
   try{const r=await fetch(`https://api.streamelements.com/kappa/v2/activities/${acc.sech}/${id}/replay`,{method:'POST',headers:{Authorization:'Bearer '+acc.jwt}});log('Replay: '+r.status)}catch(e){log('Replay falhou')}
 }
 
-/* ---------- Twitch ---------- */
-const SCOPES=['moderator:read:followers','channel:read:subscriptions','bits:read','channel:read:redemptions','channel:read:hype_train','moderator:manage:shoutouts'];
+/* ---------- Twitch API + EventSub ---------- */
+const SCOPES=['moderator:read:followers','channel:read:subscriptions','bits:read','channel:read:redemptions','channel:read:hype_train','moderator:manage:shoutouts','user:write:chat'];
 function twLogin(acc){
   if(!S.cid)return alert('Mete o Client ID');
   location.href='https://id.twitch.tv/oauth2/authorize?response_type=token&force_verify=true&client_id='+S.cid+'&redirect_uri='+encodeURIComponent(location.origin+location.pathname)+'&scope='+encodeURIComponent(SCOPES.join(' '))+'&state='+acc.id;
 }
 const hx=(acc,path,opt={})=>fetch('https://api.twitch.tv/helix/'+path,{...opt,headers:{'Authorization':'Bearer '+acc.token,'Client-Id':S.cid,'Content-Type':'application/json'}});
 async function twInit(acc){
-  if(!acc.token||!S.cid)return;
   const rt=RT[acc.id]=RT[acc.id]||{};
+  if(acc.login&&!rt.chatStarted){rt.chatStarted=1;chatConnect(acc)}
+  if(!acc.token||!S.cid)return;
   const r=await hx(acc,'users');
   if(r.status===401){acc.token='';persist();return log(`Token de ${acc.name||acc.login} expirou, entra outra vez`)}
-  const me=(await r.json()).data[0];rt.uid=me.id;acc.login=acc.login||me.login;acc.name=acc.name||me.display_name;persist();
+  const me=(await r.json()).data[0];rt.uid=me.id;
+  if(!acc.login){acc.login=me.login}
+  if(!acc.name)acc.name=me.display_name;
+  persist();
+  if(!rt.chatStarted){rt.chatStarted=1;chatConnect(acc)}
+  drawSendAs();
   twConnect(acc,'wss://eventsub.wss.twitch.tv/ws');
 }
 function twConnect(acc,url){
@@ -171,18 +197,77 @@ async function shout(acc,login){
   const r=await hx(acc,`chat/shoutouts?from_broadcaster_id=${uid}&to_broadcaster_id=${j.data[0].id}&moderator_id=${uid}`,{method:'POST'});log('Shoutout: '+r.status)
 }
 
+/* ---------- Chat (leitura anónima por IRC WebSocket) ---------- */
+function chatConnect(acc){
+  const rt=RT[acc.id],ws=new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+  ws.onopen=()=>{ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');ws.send('NICK justinfan'+Math.floor(10000+Math.random()*80000));ws.send('JOIN #'+acc.login.toLowerCase())};
+  ws.onmessage=e=>e.data.split('\r\n').forEach(line=>{
+    if(!line)return;
+    if(line.startsWith('PING')){ws.send('PONG :tmi.twitch.tv');return}
+    if(line.includes(' JOIN #')){rt.chat=true;drawTabs();return}
+    const m=line.match(/^@(\S+) :([^!]+)![^ ]+ PRIVMSG #\S+ :(.*)$/);if(!m)return;
+    const tags={};m[1].split(';').forEach(p=>{const i=p.indexOf('=');tags[p.slice(0,i)]=p.slice(i+1)});
+    addChat(acc,tags,m[2],m[3]);
+  });
+  ws.onclose=()=>{rt.chat=false;drawTabs();setTimeout(()=>chatConnect(acc),3000)};
+}
+function renderText(text,emotes){
+  const chars=Array.from(text),map={};
+  if(emotes)emotes.split('/').forEach(g=>{const [id,pos]=g.split(':');(pos||'').split(',').forEach(r=>{const [a,b]=r.split('-').map(Number);map[a]={id,end:b}})});
+  let out='';for(let i=0;i<chars.length;i++){if(map[i]){out+=`<img src="https://static-cdn.jtvnw.net/emoticons/v2/${map[i].id}/default/dark/1.0" alt="">`;i=map[i].end}else out+=esc(chars[i])}
+  return out;
+}
+function addChat(acc,tags,user,text){
+  let action=false;if(text.startsWith('\x01ACTION ')){action=true;text=text.slice(8).replace(/\x01$/,'')}
+  const el=document.createElement('div');el.className='cm'+(action?' me':'');el.dataset.acc=acc.id;
+  const col=tags.color||'#bbb',name=tags['display-name']||user;
+  el.innerHTML=`<span class="b" style="background:${acc.color}" title="${esc(acc.name||acc.login)}"></span><span class="u" style="color:${col}">${esc(name)}</span>: ${renderText(text,tags.emotes)}`;
+  el.onclick=()=>{$('#msg').value='@'+name+' ';$('#msg').focus()};
+  el.style.display=(filter==='all'||filter===acc.id)?'':'none';
+  const L=$('#chatlist'),near=L.scrollHeight-L.scrollTop-L.clientHeight<80;
+  L.appendChild(el);while(L.children.length>200)L.firstChild.remove();
+  if(near)L.scrollTop=L.scrollHeight;
+  if(view!=='chat'){unread++;$('#unread').textContent='('+unread+')'}
+}
+async function sendChat(){
+  const txt=$('#msg').value.trim();if(!txt)return;
+  const acc=S.accounts.find(a=>a.id===$('#sendAs').value),rt=acc&&RT[acc.id];
+  if(!acc||!acc.token||!rt||!rt.uid)return alert('Entra com a Twitch nesta conta para escrever');
+  const r=await hx(acc,'chat/messages',{method:'POST',body:JSON.stringify({broadcaster_id:rt.uid,sender_id:rt.uid,message:txt})});
+  if(r.ok){$('#msg').value=''}else{log('Envio falhou: '+r.status+' (volta a entrar com a Twitch para dar a permissão de chat)')}
+}
+$('#bSend').onclick=sendChat;
+$('#msg').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat()});
+function drawSendAs(){
+  const s=$('#sendAs'),cur=filter!=='all'?filter:s.value;s.innerHTML='';
+  S.accounts.forEach(a=>{const o=document.createElement('option');o.value=a.id;o.textContent=a.name||a.login||'Conta';s.appendChild(o)});
+  if(cur)s.value=cur;
+}
+
 /* ---------- UI ---------- */
+function applyFilter(){
+  document.querySelectorAll('.ev,.cm').forEach(x=>x.style.display=(filter==='all'||x.dataset.acc===filter)?'':'none');
+  if(filter!=='all')$('#sendAs').value=filter;
+  const L=$('#chatlist');L.scrollTop=L.scrollHeight;
+}
 function drawTabs(){
   const t=$('#tabs');t.innerHTML='';
-  const mk=(id,label,color,dots)=>{const b=document.createElement('div');b.className='tab'+(filter===id?' sel':'');b.style.background=color||'#2a2a36';if(color)b.style.color='#000';b.innerHTML=esc(label)+(dots||'');b.onclick=()=>{filter=id;document.querySelectorAll('.ev').forEach(x=>x.style.display=(id==='all'||x.dataset.acc===id)?'':'none');drawTabs()};t.appendChild(b)};
+  const mk=(id,label,color,dots)=>{const b=document.createElement('div');b.className='tab'+(filter===id?' sel':'');b.style.background=color||'#2a2a36';if(color)b.style.color='#000';b.innerHTML=esc(label)+(dots||'');b.onclick=()=>{filter=id;applyFilter();drawTabs()};t.appendChild(b)};
   mk('all','Todas');
-  S.accounts.forEach(a=>{const rt=RT[a.id]||{};mk(a.id,a.name||a.login||'Conta',a.color,`<span class="dot ${rt.se?'on':''}"></span><span class="dot ${rt.tw?'on':''}"></span>`)});
+  S.accounts.forEach(a=>{const rt=RT[a.id]||{};mk(a.id,a.name||a.login||'Conta',a.color,`<span class="dot ${rt.se?'on':''}" title="SE"></span><span class="dot ${rt.tw?'on':''}" title="Alertas Twitch"></span><span class="dot ${rt.chat?'on':''}" title="Chat"></span>`)});
 }
+function setView(v){
+  view=v;$('#feed').style.display=v==='alerts'?'':'none';$('#chatwrap').style.display=v==='chat'?'block':'none';
+  $('#vAlerts').classList.toggle('act',v==='alerts');$('#vChat').classList.toggle('act',v==='chat');
+  if(v==='chat'){unread=0;$('#unread').textContent='';const L=$('#chatlist');L.scrollTop=L.scrollHeight}
+}
+$('#vAlerts').onclick=()=>setView('alerts');$('#vChat').onclick=()=>setView('chat');
 function drawAccs(){
   const box=$('#accs');box.innerHTML='';
   S.accounts.forEach((a,i)=>{
     const d=document.createElement('div');d.className='acc';d.style.borderLeft='6px solid '+a.color;
     d.innerHTML=`<label>Nome a mostrar</label><input data-k="name" value="${esc(a.name)}">
+     <label>Canal Twitch (login, para o chat)</label><input data-k="login" value="${esc(a.login)}">
      <label>StreamElements JWT</label><input data-k="jwt" type="password" value="${esc(a.jwt)}">
      <label>StreamElements Channel ID</label><input data-k="sech" value="${esc(a.sech)}">
      <label>Cor</label><input data-k="color" type="color" value="${a.color}">
@@ -198,12 +283,12 @@ function drawAccs(){
 $('#bAdd').onclick=()=>{S.accounts.push(newAcc());persist();drawAccs()};
 $('#bCfg').onclick=()=>{$('#c_cid').value=S.cid;$('#c_src').value=S.src;drawAccs();$('#dlg').showModal()};
 $('#dlg').addEventListener('close',()=>{S.cid=$('#c_cid').value.trim();S.src=$('#c_src').value;persist();location.reload()});
-$('#bPause').onclick=()=>{paused=!paused;$('#bPause').classList.toggle('warn',paused);if(paused)$('#bPause').textContent='▶ Retomar';else{$('#bPause').textContent='⏸ Pausar alertas';queue.splice(0).forEach(render)}};
-$('#bMute').onclick=()=>{muted=!muted;$('#bMute').classList.toggle('warn',muted);$('#bMute').textContent=muted?'🔇 Som/vibração OFF':'🔊 Som/vibração ON'};
-$('#bClear').onclick=()=>{$('#feed').innerHTML='';count=0;$('#cnt').textContent=0};
+$('#bPause').onclick=()=>{paused=!paused;$('#bPause').classList.toggle('warn',paused);if(paused)$('#bPause').textContent='▶ Retomar';else{$('#bPause').textContent='⏸ Pausar';queue.splice(0).forEach(render)}};
+$('#bMute').onclick=()=>{muted=!muted;$('#bMute').classList.toggle('warn',muted);$('#bMute').textContent=muted?'🔇 Som OFF':'🔊 Som ON'};
+$('#bClear').onclick=()=>{$('#feed').innerHTML='';$('#chatlist').innerHTML='';count=0;$('#cnt').textContent=0};
 document.body.addEventListener('click',async()=>{try{if(!wake&&navigator.wakeLock)wake=await navigator.wakeLock.request('screen')}catch{}},{once:true});
 
-drawTabs();
+drawTabs();drawSendAs();setView('alerts');
 S.accounts.forEach(a=>{seConnect(a);twInit(a)});
 if(!S.accounts.length){S.accounts.push(newAcc());persist();$('#bCfg').click()}
 </script>
