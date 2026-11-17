@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Overflow IRL</title>
+<style>
+:root{--ac:#ff7a1a;--bg:#0e0e12;--card:#1a1a22}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#000;position:sticky;top:0;z-index:5}
+header b{color:var(--ac)}
+#tabs{display:flex;gap:6px;overflow-x:auto;padding:8px}
+.tab{flex:0 0 auto;padding:10px 14px;border-radius:20px;background:#2a2a36;font-weight:700;font-size:15px;border:2px solid transparent}
+.tab.sel{border-color:#fff}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#c0392b;margin-left:6px}
+.dot.on{background:#2ecc71}
+#bar{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:0 8px 8px}
+button{border:0;border-radius:14px;padding:16px 8px;font-size:16px;font-weight:700;background:#2a2a36;color:#fff}
+button.act{background:var(--ac);color:#000}
+button.warn{background:#c0392b}
+#big{margin:0 8px 8px;padding:20px;border-radius:16px;color:#000;font-size:21px;font-weight:800;display:none}
+#feed{padding:0 8px 80px}
+.ev{background:var(--card);border-left:8px solid #888;border-radius:12px;margin:8px 0;padding:12px}
+.ev .t{font-weight:800;font-size:18px}.ev .m{opacity:.8;margin-top:4px;word-break:break-word}
+.ev .s{font-size:11px;opacity:.6;margin-top:4px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;color:#000;font-weight:800;font-size:12px;margin-right:6px}
+.ev button{padding:8px 12px;font-size:14px;margin-top:8px;margin-right:6px}
+dialog{background:#1a1a22;color:#fff;border:0;border-radius:16px;width:94%;max-width:560px;max-height:90vh}
+dialog input,dialog select{width:100%;padding:10px;margin:4px 0 8px;border-radius:8px;border:1px solid #444;background:#0e0e12;color:#fff}
+dialog label{font-size:12px;opacity:.8}
+.acc{background:#0e0e12;border-radius:12px;padding:10px;margin:10px 0}
+#log{font-size:11px;opacity:.5;padding:4px 12px}
+</style>
+</head>
+<body>
+<header><b>OVERFLOW IRL</b><div id="cnt">0</div></header>
+<div id="tabs"></div>
+<div id="bar">
+ <button id="bPause">⏸ Pausar alertas</button>
+ <button id="bMute">🔊 Som/vibração ON</button>
+ <button id="bClear">🧹 Limpar</button>
+ <button id="bCfg">⚙️ Contas</button>
+</div>
+<div id="big"></div>
+<div id="feed"></div>
+<div id="log"></div>
+
+<dialog id="dlg"><form method="dialog">
+ <h3>Definições</h3>
+ <label>Twitch Client ID (partilhado por todas as contas)</label><input id="c_cid">
+ <label>Fonte dos eventos</label>
+ <select id="c_src"><option value="auto">Automática (SE se ligado, senão Twitch)</option><option value="se">Só StreamElements</option><option value="tw">Só Twitch</option><option value="both">Ambas (pode duplicar)</option></select>
+ <div id="accs"></div>
+ <button type="button" id="bAdd">➕ Adicionar conta</button>
+ <p style="font-size:12px;opacity:.7">URL de redirecionamento a registar na app Twitch: <code id="redir"></code><br>Para entrar com outra conta, termina a sessão na Twitch ou usa uma janela anónima antes de carregares em "Entrar".</p>
+ <button value="ok" class="act">Guardar</button>
+</form></dialog>
+
+<script>
+const $=s=>document.querySelector(s), LS=localStorage;
+const COLORS=['#ff7a1a','#2ecc71','#3498db','#e91e63','#f1c40f','#9b59b6'];
+let S=JSON.parse(LS.ov_multi||'null')||{cid:LS.ov_cid||'',src:'auto',accounts:[]};
+let paused=false,muted=false,queue=[],count=0,seen=new Set(),filter='all',wake=null;
+const RT={}; // estado de ligação por conta
+const persist=()=>LS.ov_multi=JSON.stringify(S);
+$('#redir').textContent=location.origin+location.pathname;
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function log(t){$('#log').textContent=new Date().toLocaleTimeString()+' '+t}
+function newAcc(){return {id:'a'+Date.now(),name:'',login:'',jwt:'',sech:'',token:'',color:COLORS[S.accounts.length%COLORS.length]}}
+
+/* callback OAuth: state = id da conta */
+if(location.hash.includes('access_token')){
+  const p=new URLSearchParams(location.hash.slice(1)),a=S.accounts.find(x=>x.id===p.get('state'));
+  if(a){a.token=p.get('access_token');persist()}
+  history.replaceState(null,'',location.pathname);
+}
+
+function beep(){if(muted)return;try{navigator.vibrate&&navigator.vibrate([200,80,200]);const a=new AudioContext(),o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(a.currentTime+.18)}catch(e){}}
+function dedupe(k){if(seen.has(k))return true;seen.add(k);setTimeout(()=>seen.delete(k),20000);return false}
+function srcAllowed(acc,s){const m=S.src,rt=RT[acc.id]||{};if(m==='both')return true;if(m==='se')return s==='SE';if(m==='tw')return s==='TW';return rt.se?s==='SE':s==='TW'}
+
+function push(acc,ev){
+  if(!srcAllowed(acc,ev.source))return;
+  ev.acc=acc;
+  if(paused){queue.push(ev);$('#bPause').textContent='▶ Retomar ('+queue.length+')';return}
+  render(ev)
+}
+function render(ev){
+  const acc=ev.acc;count++;$('#cnt').textContent=count;
+  const el=document.createElement('div');el.className='ev';el.dataset.acc=acc.id;el.style.borderColor=acc.color;
+  el.innerHTML=`<div class="t"><span class="badge" style="background:${acc.color}">${esc(acc.name||acc.login)}</span>${ev.icon} ${esc(ev.title)}</div>${ev.msg?`<div class="m">${esc(ev.msg)}</div>`:''}<div class="s">${ev.source} · ${new Date().toLocaleTimeString()}</div>`;
+  if(ev.user){const b=document.createElement('button');b.textContent='📣 Shoutout';b.onclick=()=>shout(acc,ev.user);el.appendChild(b)}
+  if(ev.seId){const b=document.createElement('button');b.textContent='🔁 Repetir';b.onclick=()=>replay(acc,ev.seId);el.appendChild(b)}
+  el.style.display=(filter==='all'||filter===acc.id)?'':'none';
+  $('#feed').prepend(el);
+  const big=$('#big');big.style.display='block';big.style.background=acc.color;big.textContent=(acc.name||acc.login)+' · '+ev.icon+' '+ev.title;clearTimeout(big._t);big._t=setTimeout(()=>big.style.display='none',6000);
+  beep();
+}
+
+/* ---------- StreamElements ---------- */
+function seConnect(acc){
+  if(!acc.jwt||!acc.sech)return;
+  const rt=RT[acc.id]=RT[acc.id]||{};
+  const ws=new WebSocket('wss://astro.streamelements.com/');
+  ws.onopen=()=>ws.send(JSON.stringify({type:'subscribe',nonce:crypto.randomUUID(),data:{topic:'channel.activities',room:acc.sech,token:acc.jwt,token_type:'jwt'}}));
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
+    console.log('SE',acc.name,m);
+    if(m.type==='response'||m.type==='ack'){rt.se=true;drawTabs();return}
+    const a=m.data&&m.data.type?m.data:(m.data&&m.data.data?m.data:null);if(!a)return;
+    if(!rt.se){rt.se=true;drawTabs()}
+    const d=a.data||{},u=d.displayName||d.username||'Alguém',id=a._id||a.activityId;
+    if(dedupe(acc.id+'se'+id))return;
+    const map={follow:['❤️',u+' seguiu'],subscriber:['⭐',u+' subscreveu'+(d.amount?' ('+d.amount+'m)':'')],tip:['💸',u+' doou '+(d.amount||'')+' '+(d.currency||'')],cheer:['💎',u+' deu '+(d.amount||'')+' bits'],raid:['🚀','Raid de '+u+' ('+(d.amount||'?')+')'],host:['📺','Host de '+u],redemption:['🎁',u+' resgatou '+(d.redemption||'')]};
+    const r=map[a.type]||['🔔',(a.type||'evento')+' — '+u];
+    push(acc,{source:'SE',icon:r[0],title:r[1],msg:d.message||'',user:d.username,seId:id});
+  };
+  ws.onclose=()=>{rt.se=false;drawTabs();setTimeout(()=>seConnect(acc),4000)};
+}
+async function replay(acc,id){
+  try{const r=await fetch(`https://api.streamelements.com/kappa/v2/activities/${acc.sech}/${id}/replay`,{method:'POST',headers:{Authorization:'Bearer '+acc.jwt}});log('Replay: '+r.status)}catch(e){log('Replay falhou')}
+}
+
+/* ---------- Twitch ---------- */
+const SCOPES=['moderator:read:followers','channel:read:subscriptions','bits:read','channel:read:redemptions','channel:read:hype_train','moderator:manage:shoutouts'];
+function twLogin(acc){
+  if(!S.cid)return alert('Mete o Client ID');
+  location.href='https://id.twitch.tv/oauth2/authorize?response_type=token&force_verify=true&client_id='+S.cid+'&redirect_uri='+encodeURIComponent(location.origin+location.pathname)+'&scope='+encodeURIComponent(SCOPES.join(' '))+'&state='+acc.id;
+}
+const hx=(acc,path,opt={})=>fetch('https://api.twitch.tv/helix/'+path,{...opt,headers:{'Authorization':'Bearer '+acc.token,'Client-Id':S.cid,'Content-Type':'application/json'}});
+async function twInit(acc){
+  if(!acc.token||!S.cid)return;
+  const rt=RT[acc.id]=RT[acc.id]||{};
+  const r=await hx(acc,'users');
+  if(r.status===401){acc.token='';persist();return log(`Token de ${acc.name||acc.login} expirou, entra outra vez`)}
+  const me=(await r.json()).data[0];rt.uid=me.id;acc.login=acc.login||me.login;acc.name=acc.name||me.display_name;persist();
+  twConnect(acc,'wss://eventsub.wss.twitch.tv/ws');
+}
+function twConnect(acc,url){
+  const rt=RT[acc.id],ws=new WebSocket(url);
+  ws.onmessage=async e=>{const m=JSON.parse(e.data),t=m.metadata.message_type;
+    if(t==='session_welcome'&&!ws._sub&&url==='wss://eventsub.wss.twitch.tv/ws'){ws._sub=1;await subscribeAll(acc,m.payload.session.id);rt.tw=true;drawTabs();log('Twitch ligado: '+acc.name)}
+    if(t==='session_reconnect'){ws._moved=1;twConnect(acc,m.payload.session.reconnect_url)}
+    if(t==='notification')twEvent(acc,m.payload.subscription.type,m.payload.event,m.metadata.message_id);
+  };
+  ws.onclose=()=>{if(!ws._moved){rt.tw=false;drawTabs();setTimeout(()=>twInit(acc),4000)}};
+}
+async function subscribeAll(acc,sid){
+  const b=RT[acc.id].uid,tr={method:'websocket',session_id:sid};
+  const list=[['channel.follow','2',{broadcaster_user_id:b,moderator_user_id:b}],['channel.subscribe','1',{broadcaster_user_id:b}],['channel.subscription.gift','1',{broadcaster_user_id:b}],['channel.subscription.message','1',{broadcaster_user_id:b}],['channel.cheer','1',{broadcaster_user_id:b}],['channel.raid','1',{to_broadcaster_user_id:b}],['channel.channel_points_custom_reward_redemption.add','1',{broadcaster_user_id:b}],['channel.hype_train.begin','1',{broadcaster_user_id:b}]];
+  for(const [type,version,condition] of list){const r=await hx(acc,'eventsub/subscriptions',{method:'POST',body:JSON.stringify({type,version,condition,transport:tr})});if(!r.ok)console.warn('sub falhou',acc.name,type,await r.text())}
+}
+function twEvent(acc,type,e,id){
+  if(dedupe(acc.id+'tw'+id))return;
+  const u=e.user_name||e.from_broadcaster_user_name||'Alguém',ul=e.user_login||e.from_broadcaster_user_login;let r;
+  switch(type){
+   case'channel.follow':r=['❤️',u+' seguiu',''];break;
+   case'channel.subscribe':if(e.is_gift)return;r=['⭐',u+' subscreveu (T'+(e.tier||'')[0]+')',''];break;
+   case'channel.subscription.gift':r=['🎁',(e.is_anonymous?'Anónimo':u)+' ofereceu '+e.total+' sub(s)',''];break;
+   case'channel.subscription.message':r=['⭐',u+' resub '+e.cumulative_months+'m',e.message?.text];break;
+   case'channel.cheer':r=['💎',(e.is_anonymous?'Anónimo':u)+' deu '+e.bits+' bits',e.message];break;
+   case'channel.raid':r=['🚀','Raid de '+u+' ('+e.viewers+')',''];break;
+   case'channel.channel_points_custom_reward_redemption.add':r=['🎁',u+' resgatou '+e.reward.title,e.user_input];break;
+   case'channel.hype_train.begin':r=['🔥','Hype Train começou!',''];break;
+   default:return}
+  push(acc,{source:'TW',icon:r[0],title:r[1],msg:r[2],user:ul});
+}
+async function shout(acc,login){
+  if(!acc.token)return alert('Entra com a Twitch nesta conta');
+  const uid=RT[acc.id].uid,j=await (await hx(acc,'users?login='+login)).json();if(!j.data[0])return;
+  const r=await hx(acc,`chat/shoutouts?from_broadcaster_id=${uid}&to_broadcaster_id=${j.data[0].id}&moderator_id=${uid}`,{method:'POST'});log('Shoutout: '+r.status)
+}
+
+/* ---------- UI ---------- */
+function drawTabs(){
+  const t=$('#tabs');t.innerHTML='';
+  const mk=(id,label,color,dots)=>{const b=document.createElement('div');b.className='tab'+(filter===id?' sel':'');b.style.background=color||'#2a2a36';if(color)b.style.color='#000';b.innerHTML=esc(label)+(dots||'');b.onclick=()=>{filter=id;document.querySelectorAll('.ev').forEach(x=>x.style.display=(id==='all'||x.dataset.acc===id)?'':'none');drawTabs()};t.appendChild(b)};
+  mk('all','Todas');
+  S.accounts.forEach(a=>{const rt=RT[a.id]||{};mk(a.id,a.name||a.login||'Conta',a.color,`<span class="dot ${rt.se?'on':''}"></span><span class="dot ${rt.tw?'on':''}"></span>`)});
+}
+function drawAccs(){
+  const box=$('#accs');box.innerHTML='';
+  S.accounts.forEach((a,i)=>{
+    const d=document.createElement('div');d.className='acc';d.style.borderLeft='6px solid '+a.color;
+    d.innerHTML=`<label>Nome a mostrar</label><input data-k="name" value="${esc(a.name)}">
+     <label>StreamElements JWT</label><input data-k="jwt" type="password" value="${esc(a.jwt)}">
+     <label>StreamElements Channel ID</label><input data-k="sech" value="${esc(a.sech)}">
+     <label>Cor</label><input data-k="color" type="color" value="${a.color}">
+     <div>Twitch: ${a.token?'✅ ligada':'❌ sem login'}</div>
+     <button type="button" class="act" data-act="login">Entrar com a Twitch</button>
+     <button type="button" class="warn" data-act="del">Remover</button>`;
+    d.querySelectorAll('input').forEach(inp=>inp.oninput=()=>{a[inp.dataset.k]=inp.value.trim();persist()});
+    d.querySelector('[data-act=login]').onclick=()=>{S.cid=$('#c_cid').value.trim();S.src=$('#c_src').value;persist();twLogin(a)};
+    d.querySelector('[data-act=del]').onclick=()=>{S.accounts.splice(i,1);persist();drawAccs()};
+    box.appendChild(d);
+  });
+}
+$('#bAdd').onclick=()=>{S.accounts.push(newAcc());persist();drawAccs()};
+$('#bCfg').onclick=()=>{$('#c_cid').value=S.cid;$('#c_src').value=S.src;drawAccs();$('#dlg').showModal()};
+$('#dlg').addEventListener('close',()=>{S.cid=$('#c_cid').value.trim();S.src=$('#c_src').value;persist();location.reload()});
+$('#bPause').onclick=()=>{paused=!paused;$('#bPause').classList.toggle('warn',paused);if(paused)$('#bPause').textContent='▶ Retomar';else{$('#bPause').textContent='⏸ Pausar alertas';queue.splice(0).forEach(render)}};
+$('#bMute').onclick=()=>{muted=!muted;$('#bMute').classList.toggle('warn',muted);$('#bMute').textContent=muted?'🔇 Som/vibração OFF':'🔊 Som/vibração ON'};
+$('#bClear').onclick=()=>{$('#feed').innerHTML='';count=0;$('#cnt').textContent=0};
+document.body.addEventListener('click',async()=>{try{if(!wake&&navigator.wakeLock)wake=await navigator.wakeLock.request('screen')}catch{}},{once:true});
+
+drawTabs();
+S.accounts.forEach(a=>{seConnect(a);twInit(a)});
+if(!S.accounts.length){S.accounts.push(newAcc());persist();$('#bCfg').click()}
+</script>
+</body>
+</html>
